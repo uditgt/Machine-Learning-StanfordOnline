@@ -1,0 +1,109 @@
+---
+title: "Principal Components Analysis"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Using Treasury Yields from 2020 for PCA.
+
+```{r cars}
+library(readxl)
+library(MASS)
+
+# Load Data
+setwd("C:/Users/uditg/Documents/R scripts/")
+Rates_raw <- read_excel("PCA_TsyRates.xlsx", 
+                           col_types = c("date", "numeric", "numeric", 
+                                         "numeric", "numeric", "numeric", 
+                                         "numeric", "numeric", "numeric", 
+                                         "numeric", "numeric", "numeric", 
+                                         "numeric"))
+# Droping the Date column
+Rates_raw = Rates_raw[,2:ncol(Rates_raw)]
+Rates = Rates_raw
+
+m = apply(Rates, 2, mean)
+print(m)
+
+s = apply(Rates, 2, sd)
+print(s)
+```
+
+* Scaling the Rates before running PCA
+```{r}
+Rates = scale(Rates)
+Rates[1:5,]
+```
+
+* Run PCA
+```{r}
+# Run PCA
+pca = prcomp(Rates, scale=FALSE)
+Loading = pca$rotation
+print(Loading)
+
+Scores = pca$x
+print(Scores[1:5,])
+
+# Reconciling: Rates * Loading = Scores
+PCA_scores = Rates %*% Loading
+sum(round(PCA_scores - Scores,4))
+```
+
+* Reconciling PCA output with EIGEN Vectors/ Values
+```{r}
+# Using Eigen function - Eigen vector same as loading
+eigen.vector = eigen(t(Rates)%*%Rates)$vectors
+print(eigen.vector)
+
+round(Loading - eigen.vector,4)
+
+eigen.vector[,6] = -eigen.vector[,6]     # some vectors have opposite sign
+eigen.vector[,10] = -eigen.vector[,10]
+eigen.vector[,11] = -eigen.vector[,11]
+eigen.vector[,12] = -eigen.vector[,12]
+
+sum(round(Loading - eigen.vector,4))     
+
+# Using Eigen function - Eigen values explain the %age of variance captured
+eigen.values = eigen(t(Rates)%*%Rates)$values
+
+round(eigen.values/sum(eigen.values)*100,2)
+round(pca$sdev^2/sum(pca$sdev^2)*100,2)
+```
+
+* Reconstructing Data from all Principal Components
+```{r}
+# Reconstructing Data from PCA scores
+round(ginv(Loading) %*% Loading,4)
+Loading_inv = ginv(Loading)
+
+# Reconciling reconstructed data
+round((Scores %*% Loading_inv)[1:5,] - Rates[1:5,],4)
+```
+
+* Reconstructing Data from only 3 Principal Components
+```{r}
+# Reconstructing Data using only 3 PCs
+Scores_3 = Scores[,1:3]
+Loading_inv_3 = Loading_inv[1:3,]
+
+# Reconstructed Data
+data = round((Scores_3 %*% Loading_inv_3)[1:5,],4)
+
+# Descaling Data
+data_reconstruct = matrix(data = NA, nrow = nrow(data), ncol = ncol(data))
+
+for(i in 1:nrow(data)){
+data_reconstruct[i,] = data[i,]*s+m
+}
+
+# Error between Reconstructed Data and Actual Data
+Rates_raw[1:5,]
+round(data_reconstruct,2)
+round(data_reconstruct - Rates_raw[1:5,],4)
+```

@@ -1,0 +1,347 @@
+---
+title: "Linear Models & Regularization"
+author: 'By: Udit (based on ISLR)'
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+Using **Hitters** dataset from **ISLR2** package.
+Using **Leaps** package with **regsubsets** for Best Subset Selection.
+Using **glmnet** package with **glmnet()** for Lasso & Ridge shrinkage.
+Using **pls** package with **pcr()** for Principal Components regression and
+**plsr()** for Partial Lease Square regression.
+
+```{r}
+library(ISLR2)
+library(glmnet)
+library(leaps)
+library(pls)
+
+# Data Review
+names(Hitters)
+dim(Hitters)
+summary(Hitters) # Salary has missing values
+sum(is.na(Hitters$Salary))
+
+# Drop missing values
+d_Hitters = na.omit(Hitters)
+dim(d_Hitters)
+```
+
+## Best Subset Selection
+
+Looks through $2^p$ models, and identifies best model for each value of p. 
+An asterisk indicates that a given variable is included in the corresponding model.
+
+
+```{r}
+regfit.full <- regsubsets(Salary ~., d_Hitters, nvmax=dim(d_Hitters)-1)  #nvmax=8 by default
+summary(regfit.full)
+names(summary(regfit.full))
+
+#summary(regfit.full)$rsq
+#summary(regfit.full)$adjr2
+summary(regfit.full)$bic
+
+reg.summary = summary(regfit.full)
+
+# Plot for easier viewing
+par (mfrow = c(2, 2))
+
+plot (reg.summary$rss, xlab = "Number of Variables", ylab = "RSS", type = "l")
+
+plot (reg.summary$adjr2, xlab = "Number of Variables", ylab = "Adj R2", type = "l")
+  idx <- which.max(reg.summary$adjr2)
+  points(idx, reg.summary$adjr2[idx], col="red", cex=2, pch=20)
+
+plot (reg.summary$cp, xlab = "Number of Variables", ylab = "Cp", type = "l")
+  idx <- which.min(reg.summary$cp)
+  points(idx, reg.summary$cp[idx], col="red", cex=2, pch=20)
+
+plot (reg.summary$bic, xlab = "Number of Variables", ylab = "BIC", type = "l")
+  idx <- which.min(reg.summary$bic)
+  points (idx, reg.summary$bic[idx], col="red", cex=2, pch=20)
+
+```
+
+The regsubsets() function has a built-in plot() command which can be used to 
+display the selected variables for the best model with a given number of 
+predictors, ranked according to the BIC, Cp, adjusted R2, or AIC. 
+**Black square** for each variable selected according to the optimal model 
+associated with that statistic.
+
+```{r}
+plot(regfit.full, scale = "r2")
+plot(regfit.full, scale = "adjr2")
+#plot(regfit.full, scale = "Cp")
+#plot(regfit.full, scale = "bic")
+```
+
+Coefficients for model with best fit
+```{r}
+coef(regfit.full, 10)        #based on Adj R2 and Cp
+coef(regfit.full, 6)         #based on BIC
+
+# Fitting the Final Regression Model on full data
+summary(lm(Salary~AtBat +Hits +Walks +CRBI +Division +PutOuts +CAtBat +CRuns 
+           +CWalks +Assists, d_Hitters))
+summary(lm(Salary~AtBat +Hits +Walks +CRBI +Division +PutOuts, d_Hitters))
+```
+
+## Forward & Backward Selection
+
+``` {r}
+#Forward
+regfit.fwd <- regsubsets(Salary ~., d_Hitters, nvmax=dim(d_Hitters)-1, method="forward")
+summary(regfit.fwd)
+plot(regfit.fwd, scale = "Cp")
+
+#Backward
+regfit.back <- regsubsets(Salary ~., d_Hitters, nvmax=dim(d_Hitters)-1, method="backward")
+summary(regfit.back)
+plot(regfit.back, scale = "Cp")
+
+#Comparing 7 variable models from two approaches
+coef(regfit.full, 7)
+coef(regfit.fwd, 7)
+coef(regfit.back, 7)
+```
+
+## Choosing among models using Train & Validation set method
+
+Model.matrix() function is used in many regression packages to build an “X” matrix from data.
+ 
+```{r}
+set.seed(1)
+
+dim(d_Hitters)
+train = sample(seq(263),180, replace = FALSE)   #2/3rd training
+regfit.train.fwd <- regsubsets(Salary ~., d_Hitters[train,], nvmax=dim(d_Hitters)-1, method="forward")
+
+RMSE = rep(NA, 19)
+x.test = model.matrix(Salary ~., d_Hitters[-train,])
+
+# regsubset does not have a 'Predict' function, so developing our own
+for (i in 1:19){
+  coefi = coef(regfit.train.fwd, id=i)
+  predi = x.test[,names(coefi)]%*%coefi
+  RMSE[i] = sqrt(mean( (d_Hitters$Salary[-train]-predi)^2 ))
+}
+
+#Model with 6 variables has lowest Test Error
+plot(RMSE, ylab="RMSE", ylim=c(250,450),pch=19, type="b")  
+
+points(sqrt(regfit.train.fwd$rss[-1]/180), col="blue", pch=19, type="b")
+legend("topright", legend=c("Training", "Validation"), col=c("blue", "black"), pch=19)
+```
+
+### Writing a Predict function for future use, since regsubsets doesn't work with generic predict function:
+```{r}
+print(regfit.train.fwd$call[[2]])
+
+predict.regsubsets = function(object, newdata, id,...){
+  form = as.formula(object$call[[2]])
+  mat = model.matrix(form, newdata)
+  coefi = coef(object, id)
+  mat[,names(coefi)]%*%coefi
+}
+```
+
+## Choosing among models using Cross Validation method
+```{r}
+set.seed(11)
+
+#Assign each row to a fold ranging from 1 to 10
+folds = sample(rep(1:10, length=nrow(d_Hitters)))
+table(folds)
+
+#Initialize empty error matrix
+cv.errors = matrix(NA, 10, 19) #10 folds, 19 variables
+
+for(k in 1:10){
+  cv_fit_k = regsubsets(Salary~., d_Hitters[folds!=k,], nvmax=19, method="forward")
+  for(i in 1:19){
+    pred_ki = predict(cv_fit_k, d_Hitters[folds==k,], id=i)
+    cv.errors[k,i] = mean((d_Hitters$Salary[folds==k]-pred_ki)^2)
+  }
+}
+
+#Average error
+rmse = sqrt( apply(cv.errors, 2, mean))
+plot(rmse, pch=19, type="b")
+
+#Cross Validation approach select a 9-variable model. 
+#Perform best subset selection on full data set.
+which.min(rmse)
+coef( regsubsets(Salary~., data=d_Hitters, nvmax=19), 9)
+```
+
+
+
+## Shrinkage: Ridge and Lasso
+
+This function has a different syntax from other model-fitting functions. 
+In particular, we must pass in an x matrix as well as a y vector.
+
+Argument **alpha** determines the model type. The penalty is defined 
+as $(1-α)/2||β||_2^2+α||β||_1$ where $0≤α≤ 1$. 
+
+Therefore, **alpha=1 is the lasso penalty, and alpha=0 the ridge penalty**.
+For alpha between 0 and 1, we get elastic-net.
+ 
+Note that by default, the glmnet() function standardizes the variables so that
+they are on the same scale. To turn off this default setting, use the argument 
+standardize = FALSE.
+
+### Ridge Penalty - no feature selection
+```{r}
+# Ridge penalty
+x = model.matrix(Salary~.-1, data=d_Hitters)  #dropping the intercept
+y = d_Hitters$Salary
+
+# Fit with default lambda grid
+fit.ridge = glmnet(x,y,alpha=0)
+plot(fit.ridge, xvar="lambda", label=TRUE)
+
+# User-defined lambda grid
+grid = 10^seq(10,-2,length=100)
+ridge.mod <- glmnet (x, y, alpha = 0, lambda = grid)
+plot(ridge.mod, xvar="lambda", label=TRUE)
+
+# Checking Coefficients for different lamdbas
+ridge.mod$lambda[50]
+coef(ridge.mod)[,50]
+ridge.mod$lambda[60]
+coef(ridge.mod)[,60]
+
+# In-build Cross Validation (k=10 by default)
+cv.ridge = cv.glmnet(x,y,alpha=0)
+plot(cv.ridge)     #two dashed lines
+```
+
+Review best fit values of **lambda**
+lambda.min	= value of lambda that gives minimum cvm (mean cross-validated error).
+lambda.1se	= largest value of lambda st. error is within 1 std error of the min.
+
+```{r}
+# Extract best value for lambda based on CV
+cv.ridge$lambda.min
+cv.ridge$lambda.1se
+
+```
+
+### Lasso Penalty - shrinkage + feature selection
+```{r}
+# Lasso penalty
+fit.lasso = glmnet(x,y,alpha=1)
+plot(fit.lasso, xvar="lambda", label=TRUE)
+
+# In-build Cross Validation
+cv.lasso = cv.glmnet(x,y,alpha=1)
+plot(cv.lasso)
+
+# Extract best value for lambda based on CV
+cv.lasso$lambda.min
+cv.lasso$lambda.1se
+
+# Review Coeff for best fit model
+coef(cv.lasso)
+```
+
+The plot shows that a lot of R2 is explained by variables with heavily shrunk
+coefficients And at the end, only a small improvement is caused in R2 by some 
+big increase in coefficients, *possibly implying over-fitting*.
+
+```{r}
+plot(fit.lasso, xvar="dev", label=TRUE)
+```
+
+Using Train/ Validation split instead fo find best model.
+```{r}
+# Train/ Test approach
+train.lasso = glmnet(x[train,],y[train],alpha=1)
+train.lasso
+pred = predict(train.lasso, x[-train,])
+dim(pred)  #83 values of lambda and 83 rows in test data
+
+# RMSE
+rmse = sqrt(apply((y[-train] -pred)^2, 2, mean))
+plot(log(train.lasso$lambda), rmse, type="b", xlab="Log(Lambda)")
+
+# Best Lambda
+idx = which.min(rmse)
+train.lasso$lambda[idx]
+```
+
+## Principal Components Regression (PCR)
+
+Setting **scale = TRUE** has the effect of standardizing each predictor.
+Setting **validation = "CV"** causes pcr() to compute the ten-fold cross-validation 
+error for each possible value of M, the number of principal components used.
+
+Note that pcr() reports the root mean squared error.
+
+```{r}
+set.seed(2)
+pcr.fit <- pcr(Salary~., data=d_Hitters, scale=TRUE, validation="CV")
+summary(pcr.fit)
+pcr.fit$loadings
+  # sum(pcr.fit$loadings[,1]^2)   # sum of square of coeffs for any PC adds up to one
+  # sum(pcr.fit$loadings[,6]^2)   # sum of square of coeffs for any PC adds up to one
+validationplot(pcr.fit, val.type="MSEP")
+
+#Using Train/ Test split - 5 component model has best fit
+set.seed (1)
+train <- sample(1:nrow(d_Hitters), nrow(d_Hitters)/2)
+x <- model.matrix(Salary∼., d_Hitters)[,-1]
+y <- d_Hitters[,"Salary"]
+  
+pcr.fit.train <- pcr(Salary~., data=d_Hitters, scale=TRUE, validation="CV", 
+                     subset=train)   #using both training and CV!
+validationplot(pcr.fit.train, val.type="MSEP")
+
+pcr.pred <- predict(pcr.fit.train, x[-train,], ncomp=5)
+mean((pcr.pred - d_Hitters[-train,"Salary"])^2)
+
+
+#Fitting 5 component model on full-dataset
+pcr.fit.5 <- pcr(Salary~., data=d_Hitters, scale=TRUE, ncomp=5)
+summary(pcr.fit.5)
+
+```
+## Partial Least Square (PLS) Regression
+
+Setting **scale = TRUE** has the effect of standardizing each predictor.
+Setting **validation = "CV"** causes pcr() to compute the ten-fold cross-validation 
+error for each possible value of M, the number of principal components used.
+
+Note that pcr() reports the root mean squared error.
+
+```{r}
+set.seed(1)
+pls.fit <- plsr(Salary~., data=d_Hitters, subset=train, scale=TRUE, validation="CV")
+summary(pls.fit)
+validationplot(pls.fit, val.type="MSEP")
+
+# Performance on Test Set
+pls.pred <- predict(pls.fit, x[-train,], ncomp=1)
+mean((pls.pred - d_Hitters[-train,"Salary"])^2)
+
+# Performance on Full dataset
+pls.fit.full <- plsr(Salary~., data=d_Hitters, scale=TRUE, ncomp=1)
+summary(pls.fit.full)
+```
+
+
+Notice that the percentage of variance in Salary that the one-component PLS fit
+explains, 43.05 %, is almost as much as that explained using the final 
+five-component model PCR fit, 44.90 %. This is because PCR only attempts to
+maximize the amount of variance explained in the predictors, while PLS searches
+for directions that explain variance in both the predictors and the response.
