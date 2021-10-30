@@ -1,1 +1,1 @@
-# R_codes
+Sample codes in R
