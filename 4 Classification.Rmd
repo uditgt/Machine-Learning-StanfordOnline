@@ -1,0 +1,238 @@
+---
+title: "4 Classification"
+author: "By: Udit (based on ISLR)"
+output: pdf_document
+---
+
+## Setup
+
+LDA & QDA is part of **MASS** library.  
+Naive Bayes is part of **e1071** library.  
+KNN is part of **class** library.
+
+```{r}
+library(ISLR2)
+library(MASS)
+library(class)
+library(e1071)
+
+# Stock Market data
+attach(Smarket)
+dim(Smarket)
+names(Smarket)
+summary(Smarket)
+round(cor(Smarket[,-9]),2)
+pairs(Smarket, col=Smarket$Direction, pch=20)
+```
+
+## Logistic Regression
+
+```{r}
+glm.fit = glm(Direction~.-Year-Today, data=Smarket, family=binomial)
+summary(glm.fit)
+
+# Predicted probabilities are close to 50% as expected
+predict(glm.fit, type="response")[1:5]
+
+# Probability to Classification
+glm.probs = predict(glm.fit, type="response")
+glm.pred  = ifelse(glm.probs>0.5, "Up", "Down")
+
+# Confusion Matrix
+attach(Smarket)
+table(glm.pred, Direction)
+mean(glm.pred==Direction)
+
+# Make Training & Test data
+train = Year<2005
+glm.fit = glm(Direction~. - Today -Year, data=Smarket, family=binomial,
+                 subset=train)
+glm.probs = predict(glm.fit, newdata=Smarket[!train,],type="response")
+glm.preds = ifelse(glm.probs>0.5, "Up", "Down")
+
+# Check performance - possible overfitting
+Direction.test = Smarket$Direction[!train]
+table(glm.preds, Direction.test)
+mean(glm.preds==Direction.test)
+
+# Fit smaller model
+glm.fit = glm(Direction~Lag1+Lag2, data=Smarket, family=binomial, subset=train)
+glm.probs = predict(glm.fit, newdata=Smarket[!train,], type="response")
+contrasts(Direction)
+glm.preds = ifelse(glm.probs>0.5, "Up", "Down")
+table(glm.preds, Direction.test)
+mean(glm.preds==Direction.test)
+106/(106+76)
+
+summary(glm.fit)
+```
+
+## Linear Discriminant Analysis
+
+```{r}
+lda.fit = lda(Direction~Lag1+Lag2, subset=Year<2005)
+lda.fit
+
+Smarket.test = subset(Smarket, Year>=2005)
+lda.pred = predict(lda.fit, Smarket.test)
+data.frame(lda.pred)[1:5,]
+
+table(lda.pred$class, Smarket.test$Direction)
+mean(lda.pred$class == Smarket.test$Direction)
+
+```
+## Quadratic Discriminant Analysis
+
+```{r}
+qda.fit = qda(Direction ~ Lag1 + Lag2, data=Smarket, subset=train)
+qda.fit
+
+qda.pred = predict(qda.fit, Smarket.test)
+table(qda.pred$class, Smarket.test$Direction)
+mean(qda.pred$class == Smarket.test$Direction)
+```
+## Naive Bayes
+```{r}
+nb.fit = naiveBayes(Direction~Lag1+Lag2, data=Smarket, subset=train)
+nb.fit
+mean(Lag1[train][Direction[train]=="Down"])
+sd(Lag1[train][Direction[train]=="Down"])
+
+nb.pred = predict(nb.fit, Smarket.test)
+table(nb.pred, Smarket.test$Direction)
+mean(nb.pred == Smarket.test$Direction)
+
+predict(nb.fit, Smarket.test, type="raw")[1:5,]
+```
+
+
+## KNN
+
+```{r}
+attach(Smarket)
+ls()
+
+xlag = cbind(Lag1, Lag2)
+xlag[1:5,]
+
+knn.pred = knn(xlag[train,], xlag[!train,], Direction[train], k=1)
+table(knn.pred,Direction[!train])
+mean(knn.pred == Direction[!train])
+
+for(i in 1:10){
+knn.pred = knn(xlag[train,], xlag[!train,], Direction[train], k=i)
+table(knn.pred,Direction[!train])
+print(c(i,mean(knn.pred == Direction[!train])))
+}
+```
+
+## KNN - Example 2
+
+```{r}
+attach(Caravan)
+dim(Caravan)
+names(Caravan)  #85 demographic indicators
+summary(Purchase)
+round(348/5822,4)*100
+
+standard.X = scale(Caravan[,-86])
+var(Caravan[,1:2]); var(standard.X[,1:2])
+
+test <- 1:1000
+test.X = standard.X[test,]
+test.Y = Purchase[test]
+
+train.X = standard.X[-test,]
+train.Y = Purchase[-test]
+
+set.seed(1)
+knn.pred <- knn(train.X, test.X, train.Y, k=1)
+mean(test.Y == knn.pred)
+# Error rate
+mean(test.Y != knn.pred)
+mean(test.Y != "No")  # no skill, always predicting "no"
+
+# How about only positive cases
+table(knn.pred, test.Y)
+10/(69+10)
+
+# Changing K (can be tested through CV)
+knn.pred <- knn(train.X, test.X, train.Y, k=3)
+table(knn.pred, test.Y)
+5/(19+5)
+
+knn.pred <- knn(train.X, test.X, train.Y, k=5)
+table(knn.pred, test.Y)
+4/15
+
+# Compare with Logistic Regression
+glm.fits = glm(Purchase ~., data=Caravan, subset=-test, family=binomial)
+glm.probs = predict(glm.fits, Caravan[test,], type="response")
+
+pred.Y = ifelse(glm.probs>0.5, "Yes", "No")
+table(pred.Y, test.Y)  # Recall = 0
+
+# Changing threshold
+pred.Y = ifelse(glm.probs>0.25, "Yes", "No")
+table(pred.Y, test.Y)  # Recall = 0
+```
+
+## Poisson Regression
+```{r}
+attach(Bikeshare)
+dim(Bikeshare)
+names(Bikeshare)
+
+# Linear Regression ######
+mod.lm <- lm(bikers~mnth+hr+workingday+temp+weathersit, data=Bikeshare)
+summary(mod.lm)
+
+# Alternate Coding for qualitative variables - no base; Coeff(last level) = Sum of other Coeffs.
+contrasts(Bikeshare$hr) = contr.sum(24)
+contrasts(Bikeshare$mnth) = contr.sum(12)
+
+mod.lm2 <- lm(bikers~mnth+hr+workingday+temp+weathersit, data=Bikeshare)
+summary(mod.lm2)
+
+# No impact to predictions
+sum((predict(mod.lm)-predict(mod.lm2))^2)
+all.equal(predict(mod.lm), predict(mod.lm2))
+
+# Coeff for December
+-sum(coef(mod.lm2)[2:12])
+
+# Plotting Coeff
+par(mfrow=c(1,2))
+coef.months = c(coef(mod.lm2)[2:12], -sum(coef(mod.lm2)[2:12]))
+plot(coef.months, xlab="Month", ylab="Coeff", xaxt="n", col="blue", pch=19, type="o")
+axis(side=1, at=1:12, labels=c("J","F","M","A","M","J","J","A","S","O","N","D"))
+
+coef.hrs = c(coef(mod.lm2)[13:35], -sum(coef(mod.lm2)[13:35]))
+plot(coef.hrs, xlab="Hour", ylab="Coeff", xaxt="n", col="blue", pch=19, type="o")
+
+
+# Poisson Regression ######
+mod.pois <- glm(bikers~mnth+hr+workingday+temp+weathersit, data=Bikeshare,
+                family=poisson)
+summary(mod.pois)
+
+coef.months = c(coef(mod.pois)[2:12], -sum(coef(mod.pois)[2:12]))
+plot(coef.months, xlab="Month", ylab="Coeff", xaxt="n", col="blue", pch=19, type="o")
+axis(side=1, at=1:12, labels=c("J","F","M","A","M","J","J","A","S","O","N","D"))
+
+coef.hrs = c(coef(mod.pois)[13:35], -sum(coef(mod.pois)[13:35]))
+plot(coef.hrs, xlab="Hour", ylab="Coeff", xaxt="n", col="blue", pch=19, type="o")
+
+# Predict
+par(mfrow=c(1,1))
+plot(predict(mod.lm2), predict(mod.pois, type="response"))
+abline(0,1, col=2, lwd=3)
+
+```
+
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
