@@ -1,0 +1,159 @@
+---
+title: "5 Resampling"
+author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
+output: pdf_document
+---
+
+## Setup
+
+Bootstrapping courtesy of the **boot** package. Includes **cv.glm()** function used
+for cross-validation (including LOOCV).
+
+```{r}
+library(ISLR2)
+library(boot)
+
+attach(Auto)
+names(Auto)
+dim(Auto)
+
+plot(mpg~horsepower, data=Auto)
+```
+
+## LOOCV
+
+**cv.glm()** is general implementation, therefore does not use the formula approach
+available in Least-Square fit/ Simple Regression case.
+
+**cv.glm()$delta** is a vector of length two. The first component is the raw 
+cross-validation estimate of prediction error. The second component is the 
+adjusted cross-validation estimate. The adjustment is designed to compensate 
+
+**lm.influence()** part of regression diagnostic to check for quality of fit.
+
+```{r}
+glm.fit = glm(mpg~horsepower, data=Auto)  
+summary(glm.fit)  #GLM works, though LM provides better output summary
+#summary(lm(mpg~horsepower, data=Auto))
+
+## LOOCV
+cv.glm(Auto, glm.fit)$delta  #k (folds) = n (# of obs) by default
+
+## Brute-force implementation
+run.LOOCV = function(data){
+  n = nrow(data)
+  error = 0
+  for(i in 1:n){
+    test = data[i,]
+    train = data[-i,]
+    glm.fit = glm(mpg~horsepower, data=train)
+    glm.pred = predict(glm.fit, newdata=test)
+    error = error + (glm.pred-test$mpg)^2
+  }
+  print(error/n)
+}
+run.LOOCV(Auto) # 24.23151
+
+## Leverage/'h' formula based implementation
+loocv = function(fit){
+  h = lm.influence(fit)$h
+  mean((residuals(fit)/(1-h))^2)
+}
+loocv(glm.fit)  # 24.23151
+
+```
+
+## LOOCV - for model selection
+
+```{r}
+degree = 1:5
+cv.error = rep(0,5)
+
+for(d in degree){
+  glm.fit=glm(mpg~poly(horsepower,d), data=Auto)
+  cv.error[d] = loocv(glm.fit)
+}
+
+plot(degree, cv.error, type="o", col="blue", pch=20)
+```
+
+## Cross Validation: 10-Fold
+```{r}
+cv.error10=rep(0,5)
+for(d in degree){
+  glm.fit=glm(mpg~poly(horsepower,d), data=Auto)
+  cv.error10[d] = cv.glm(Auto, glm.fit, K=10)$delta[1]
+}
+plot(degree, cv.error, type="o", col="blue", pch=20)
+lines(degree, cv.error10, type="o", col="red", pch=20)
+```
+
+## Bootstrap
+
+```{r}
+
+# Optimum allocation (alpha) b/w two securities X, Y to minimize variance
+alpha= function(x,y){
+  vx = var(x)
+  vy = var(y)
+  cxy = cov(x,y)
+  (vy-cxy)/(vx+vy-2*cxy)
+}
+
+# Portfolio dataset in ISLR2
+attach(Portfolio)
+names(Portfolio)
+dim(Portfolio)
+
+# Optimum allocation at ~ 0.6
+alpha(X,Y)
+
+# Estimate alpha for bootstrapped sample indicated by 'index'
+alpha.fn = function(data, index){
+  with(data[index,], alpha(X,Y))   
+}
+
+# Bootstrapping
+set.seed(1)
+alpha.fn(Portfolio, sample(1:100, 100, replace=TRUE))
+boot.out = boot(Portfolio, alpha.fn, R=1000)
+boot.out
+plot(boot.out)
+```
+
+## Block Bootstrapping
+
+**Note 1:** There is very strong autocorrelation between consecutive rows of the 
+data matrix. Roughly speaking, we have about 10-20 repeats of every data point, 
+so the sample size is in effect much smaller than the number of rows (1000 in this case).
+
+```{r}
+load("5.R.RData")
+mod = lm(y~., data=Xy)
+summary(mod)  # see Note 1
+matplot(Xy, type="l")
+
+# Bootstrapping to estimate SE(X1) - similar as above
+se.fn = function(data, index){
+  mod = lm(y~., data=data[index,])
+  coef(mod)
+  #coef(summary(mod))[, "Std. Error"][[2]]
+}
+boot.out = boot(Xy, se.fn, R=1000)
+boot.out
+
+# Block Sampling - using 10 contiguous blocks of 100 obs each
+se.fn1 = function(data, index){
+  newXY = Xy[data[index]+rep(0:99, each=10),]
+  mod = lm(y~., data=newXY)
+  coef(mod)
+}
+s = seq(1,1000,100)
+boot.out = boot(s, se.fn1, R=1000)
+boot.out  #0.2 ... ~10x when we take auto-correlation into account
+```
+
+
+
+
