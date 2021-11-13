@@ -1,6 +1,7 @@
 ---
 title: "7 Non-Linear Models"
 author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
 output: pdf_document
 ---
 
@@ -18,8 +19,8 @@ dim(Wage)
 
 ## Polynomial Regression
 
-Regression of Wage ~ Age, upto polynomial of power 4.
-Polynomial vs. Spline - most important drawback of spline being non-locality. 
+Regression of Wage ~ Age, up to polynomial of power 4.
+Polynomial vs. Spline - most important drawback of polynomial being non-locality. 
 That is the fitted function at a given value x0 depends on data values far from that point.
 
 ```{r}
@@ -136,7 +137,7 @@ points(jitter(age), I(wage>250)/10, pch="|", cex=0.5)
 
 ## Step Functions
 
-Using **cut()**. Breaks can be manually assigned using **breaks option*.*
+Using **cut()**. Breaks can be manually assigned using **breaks option**.
 
 The age < 33.5 category is left out, so the intercept coefficient of 94 can be
 interpreted as the average salary for those under 33.5 years of age, and the other 
@@ -145,9 +146,15 @@ coefficients are average additional salary for those other age groups.
 table(cut(age,4))
 fit.step = lm(wage~cut(age,4), data=Wage)
 coef(summary(fit.step))
+
+fit.step1 = lm(wage~cut(age,c(17,25,40,65,82)), data=Wage)
+
+plot(age, wage, pch=20, col="gray")
+points(age,fitted(fit.step), pch=20, col="blue")
+points(age,fitted(fit.step1), col="red")
 ```
 
-## Splines - Fixed-knot Cubic Spline and Smooth-spline
+## Splines - Fixed-knot Cubic Spline
 
 **bs()** generates the B-spline basis matrix for a polynomial spline (cubic by default.)
 **ns()** generates natural spline.
@@ -156,6 +163,9 @@ coef(summary(fit.step))
 ```{r}
 # 3 knots will lead to 7 DFs (K+4) = 1 intercept + 6 basis functions
 # We can either specify knots or DFs
+agelims=range(age)
+age.grid = seq(from =agelims[1], to=agelims[2])
+
 fit.spline = lm(wage~bs(age, knots=c(25, 40, 60)),data=Wage)
 summary(fit.spline)
 pred.spline = predict(fit.spline, list(age=age.grid), se=TRUE)
@@ -164,7 +174,7 @@ fit.nspline = lm(wage~ns(age, knots=c(25, 40, 60)),data=Wage)
 summary(fit.spline)
 pred.nspline = predict(fit.nspline, list(age=age.grid), se=TRUE)
 
-plot(age, wage, col="gray")
+plot(age, wage, col="gray", pch=20)
 lines(age.grid, pred.spline$fit , col="blue", lwd=2)
 lines(age.grid, pred.nspline$fit, col="red", lwd=2)
 abline(v=c(25, 40, 60), lty=2, col="grey")
@@ -174,9 +184,10 @@ matlines(age.grid, cbind(pred.spline$fit + 2*pred.spline$se,
                          pred.nspline$fit + 2*pred.nspline$se), lty="dashed", col=c("blue", "blue", "red", "red"))
 legend("topright", legend=c("Cubic Spline", "Natural Cubic Spline"), col= c("blue", "red"), lty=1, lwd=2)
 ```
+## Splines - Smoothing-splines
 
-Smooth-spline does not require knot selection, as each point is a knot. But a smoothing
-parameter $lambda$.
+Smoothing-splines do not require knot selection, as **each point is a knot.**  
+But a smoothing parameter $lambda$. Resulting spline is a natural cubic spline.
 
 ```{r}
 # Controlling smoothing parameter by (i) Effective degrees of freedom
@@ -208,14 +219,15 @@ legend("topright", legend=c("Span=0.2/20%", "Span=0.5/50%"), col=c("Red", "Blue"
 
 ## GAM: Generalized Additive Models
 
-Mixing more than one predictors. Use **s()** to specify a **Smoothing Spline** fit in a GAM Formula.
+Mixing more than one predictors. Use **s()** to specify a **Smoothing Spline** fit in 
+a GAM Formula.
 
-The generic **plot()** function recognizes that gam.m3 is an object of class Gam, 
+The generic **plot()** function recognizes that _gam.m3_ is an object of class Gam, 
 and invokes the appropriate **plot.Gam()** method.
 
-Compelling evidence that a GAM with a linear function of year is better than a 
-GAM that does not include year at all (p-value = 0.00014). However, there is no
-evidence that a non-linear function of year is needed (p-value = 0.349).
+Compelling evidence that a GAM with a linear function of year is better vs. one 
+that doesn't include year (p-value = 0.00014). However, there is no evidence that 
+a non-linear function of year is needed (p-value = 0.349).
 
 ```{r}
 # Gam with smoothing spline
