@@ -1,0 +1,205 @@
+---
+title: "8 Trees"
+author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
+output: pdf_document
+---
+
+## Setup
+
+* **tree** package for Trees.  
+* **randomForest** package for Random Forests.  
+* **gbm** package for Gradient Boosted Machines.  
+* **BART** package for Bayesian Additive Regression Trees.  
+
+```{r}
+library(ISLR2)
+library(tree)
+library(randomForest)
+library(gbm)
+library(BART)
+```
+```{r}
+attach(Carseats)
+names(Carseats)
+dim(Carseats)
+```
+
+## Decision Tree (classification)
+
+```{r}
+High = ifelse(Sales<=8,"No","Yes")
+Cars = data.frame(Carseats, High=as.factor(High))
+names(Cars)
+
+#summary(Cars)
+tree.car = tree(High~.-Sales, data=Cars)
+summary(tree.car)
+
+# plot tree
+plot(tree.car); text(tree.car, pretty=0)
+
+# display all details
+tree.car
+
+# Checking performance using train/ test split
+set.seed(1011)
+train = sample(1:nrow(Cars), 250)
+tree.car = tree(High~.-Sales, data=Cars, subset=train)
+plot(tree.car); text(tree.car, pretty=0)
+
+# Predict & confusion matrix
+tree.pred = predict(tree.car, Cars[-train,], type="class")
+table(tree.pred, Cars[-train,]$High)
+(45+58)/150  # ~69%
+
+# Pruning Tree using CV - based on classification rate error
+cv.car = cv.tree(tree.car, FUN=prune.misclass)
+cv.car       # dev here means number of CV error
+plot(cv.car) # 13 terminal nodes appear to give best fit
+
+# Pruning for 13 terminal nodes
+prune.car = prune.misclass(tree.car, best=13)
+plot(prune.car); text(prune.car, pretty=0)
+
+# Evaluate tree on test data
+prune.pred = predict(prune.car, Cars[-train,], type="class")
+table(prune.pred, Cars[-train,]$High)
+(46+59)/150   #~70%, similar performance but shallower tree
+```
+## Regression Tree (quantitative)
+
+```{r}
+set.seed(1)
+train = sample(1:nrow(Boston), nrow(Boston)/2)
+tree.boston = tree(medv~., data=Boston, subset=train)
+summary(tree.boston)   #deviance = sum of squared errors
+plot(tree.boston); text(tree.boston, pretty=0)
+
+# pruning
+cv.boston = cv.tree(tree.boston)
+plot(cv.boston$size, cv.boston$dev, type="b")
+
+prune.boston = prune.tree(tree.boston, best=5)
+plot(prune.boston); text(prune.boston, pretty=0)
+
+# making predictions
+pred = predict(prune.boston, Boston[-train,])
+plot(pred, Boston[-train, "medv"])
+abline(0,1)
+sqrt(mean((pred-Boston[-train,"medv"])^2))  # ~$6000 error
+
+# fitting a larger tree
+tree.boston.deep = tree(medv~., data=Boston, subset=train,
+                   control=tree.control(nobs=length(train), mindev=0))
+summary(tree.boston.deep)
+
+```
+
+
+## Random Forest & Bagging
+
+**Bagging (bootstrap aggregating)** is a special case of Random Forest, when all 
+variables are available for selection at each split.  
+
+**Node Purity** - small value indicates that a node contains mostly observations 
+from a single class.
+
+```{r}
+attach(Boston)
+dim(Boston)    # has 13 variables, MASS package has 14 variables (+ "black")
+names(Boston)
+
+set.seed(101)
+train = sample(1:nrow(Boston), 300)
+
+# Random Forest
+rf.boston = randomForest(medv~., data=Boston, subset=train)
+rf.boston
+
+# Variable Importance
+# total decrease in node purity from that variable avg. over all trees
+importance(rf.boston)  
+varImpPlot(rf.boston)
+
+# Tuning parameter - only 1 - number of variables tried at each split
+oob.err = double(12)
+test.err = double(12)
+for(i in 1:12){
+  fit = randomForest(medv~., data=Boston, subset=train, mtry=i, ntree=400)
+  oob.err[i] = fit$mse[400]
+  
+  pred = predict(fit, Boston[-train,])
+  test.err[i] = mean((Boston[-train,]$medv - pred)^2)
+  cat(i," ")
+}
+
+# plot - 4 appears to be a good choice
+matplot(1:12, cbind(test.err, oob.err), pch=19, col=c("red","blue"), type="b",
+        ylab="MSE", xlab="Variables at each split", main="Random Forest / Bagging")
+legend("topright", legend=c("OOB", "Test"), pch=19,col=c("red","blue"))
+```
+
+## Boosting
+
+Slow learning based on lots of shallow trees. Unlike random forests, no bootstrapping
+is done, instead each new tree fits on updated residuals.  
+**Interaction depth** defines depth of tree and is a _tuning parameter_ along 
+with **shrinkage**.
+
+```{r}
+# "gaussian" - regression; "bernoulli" - classification
+boost.boston = gbm(medv~., data=Boston[train,], distribution="gaussian", 
+                   n.trees=10000, shrinkage=0.01, interaction.depth=4)
+
+# variable importance plot
+summary(boost.boston)
+
+# Partial Dependence Plots
+plot(boost.boston, i="lstat")  # price falls with increase in lower status of pop
+plot(boost.boston, i="rm")     # price increases with number of rooms
+
+# Performance
+boost.pred = predict(boost.boston, Boston[-train,],n.trees=10000)
+sqrt(mean((Boston[-train,"medv"]-boost.pred)^2))  # ~$3500 error
+
+# Test performance as number of trees
+n.trees = seq(100,10000,100)
+predmat = predict(boost.boston, newdata=Boston[-train,], n.trees=n.trees)
+dim(predmat) # 206 observations, 100 number of trees
+boost.err = apply((predmat-Boston[-train,]$medv)^2, 2, mean)
+length(boost.err) # 100
+plot(n.trees, boost.err, pch=19, ylab="MSE", xlab="# of Trees", 
+     main="Boosting Test Error", col="blue")
+abline(h=min(test.err), col="red")
+
+# Using different value of 'lambda'
+boost.boston2 = gbm(medv~., data=Boston[train,], distribution="gaussian", 
+                   n.trees=10000, shrinkage=0.2, interaction.depth=4)
+# Performance
+boost.pred2 = predict(boost.boston2, Boston[-train,],n.trees=10000)
+sqrt(mean((Boston[-train,"medv"]-boost.pred2)^2))  # ~$3600 error
+```
+
+## Bayesian Additive Regression Trees
+
+```{r}
+x <- Boston[,1:12]
+y <- Boston[,"medv"]
+
+xtrain = x[train,]
+ytrain = y[train]
+xtest  = x[-train,]
+ytest  = y[-train]
+
+set.seed(1)
+bartfit = gbart(xtrain, ytrain, x.test=xtest)
+
+bart.pred = bartfit$yhat.test.mean
+sqrt(mean((ytest-bart.pred)^2))   #~$3400 error
+
+# How many times each variable appeared in the collection of trees.
+ord = order(bartfit$varcount.mean, decreasing=T)
+bartfit$varcount.mean[ord]
+```
+
