@@ -1,0 +1,330 @@
+---
+title: "9 SVM"
+author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
+output: pdf_document
+---
+
+## Setup
+
+The way **Cost** is implemented in model fitting, is different from how it is 
+explained in the book. In the text $Cost= \sum e_i$ implying higher margin as cost 
+**increases**. However, in code it is a regularization term similar to ridge or lasso
+regressions: $Cost*\sum e_i$, implying higher margin as cost **decreases**.
+* [StackExchange link](https://stats.stackexchange.com/questions/420047/c-penalty-in-svm-larger-c-increases-the-margin-or-reduces-the-margin?newreg=a94d6528575349c4aae072b117b3a016)
+
+```{r}
+library(ISLR2)
+library(e1071) # for SVM
+library(ROCR)  # for ROC curves
+```
+
+## Linear SVM Classifier - classes are NOT linearly separable
+
+SVM fit also provides support points under **$index**. **Tune()** function allows
+us to run cross-validation.  
+SVM does not readily provide coefficients from the fit.
+
+```{r}
+# Function to get grid for plotting
+make.grid = function(x,n=75){
+  xrange = apply(x,2, range)
+  x1=seq(from=xrange[1,1], to=xrange[2,1],length=n)
+  x2=seq(from=xrange[1,2], to=xrange[2,2],length=n)
+  expand.grid(X1=x1, X2=x2)
+}
+
+# Simulated data
+set.seed(10111)
+x=matrix(rnorm(40),20,2)
+y=rep(c(-1,1),c(10,10))
+
+# Shifting 'means'
+x[y==1,] = x[y==1,]+1
+
+# Classes are NOT linearly separable
+plot(x,col=y+3,pch=19)
+
+# Fitting Linear SVM with Cost
+dat = data.frame(x,y=as.factor(y))
+fit.svm = svm(y~., data=dat, kernel="linear", cost=10, scale=FALSE)
+print(fit.svm)
+
+# plot(fit.svm, dat) # produces an ugly looking plot
+
+# Plot result
+x.grid = make.grid(x)
+y.grid = predict(fit.svm, x.grid)
+plot(x.grid, col=c("red","blue")[as.numeric(y.grid)], pch=20, cex=.5)
+points(x, col=y+3, pch=19)
+points(x[fit.svm$index,], pch=5, cex=2)
+  
+# Result using another value for cost function
+summary(svm(y~., data=dat, kernel="linear", cost=1, scale=FALSE))
+
+# Cross Validation on "Cost" parameter using tune()
+tune.out = tune(svm, y~., data=dat, kernel="linear",
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100)))
+summary(tune.out)
+
+# Tune provides best fit model
+best.mod = tune.out$best.model
+summary(best.mod)
+
+# Making predictions
+x.test = matrix(rnorm(40),20,2)
+y.test = rep(c(-1,1),c(10,10))
+x.test[y.test==1,] = x.test[y.test==1,]+1
+dat.test = data.frame(X1 = x.test[,1], X2 = x.test[,2], y = as.factor(y.test))
+y.pred = predict(best.mod, dat.test)
+table(pred=y.pred, truth = dat.test$y)
+```
+
+```{r}
+# Extracting Coefficients
+beta = drop(t(fit.svm$coefs)%*%x[fit.svm$index,])
+beta0 = fit.svm$rho
+plot(x.grid, col=c("red","blue")[as.numeric(y.grid)], pch=20, cex=0.5)
+points(x, col=y+3, pch=19)
+abline(beta0/beta[2], -beta[1]/beta[2])  # intercept and slope
+abline((beta0-1)/beta[2], -beta[1]/beta[2], lty=2)
+abline((beta0+1)/beta[2], -beta[1]/beta[2], lty=2)
+points(x[fit.svm$index,], pch=5, cex=2)
+```
+
+## Linear SVM Classifier - classes ARE linearly separable
+
+```{r}
+# Shifting 'means' a little more to make classes separable
+x[y==1,] = x[y==1,]+.5
+
+# Classes ARE linearly separable now
+plot(x, col= (y+5)/2, pch=19)
+
+# Fitting Linear SVM
+dat.sep = data.frame(X1=x[,1], X2 = x[,2], y = as.factor(y))
+fit.svm.sep = svm(y~., data=dat.sep, kernel = "linear", cost = 1e5)
+summary(fit.svm.sep)
+
+# Plot
+x.grid = make.grid(x)
+y.grid = predict(fit.svm.sep, x.grid)
+plot(x.grid, col=c("red","blue")[as.numeric(y.grid)], pch=20, cex=.5)
+points(x, col=(y+5)/2, pch=19)
+points(x[fit.svm.sep$index,], pch=5, cex=2)
+```
+
+While the classes are linearly separable, we get a fit with small margin, which is 
+highly dependent on position for those 3 support vectors - and by extension has 
+high variance, and possibly won't do as well on test data.
+
+## SVM - Non-linear Kernel
+
+### Example 1
+
+Decision boundary comes in pretty close to the **true** boundary, esp. in the the 
+regions where data exists.
+
+```{r}
+load(url("http://www-stat.stanford.edu/~tibs/ElemStatLearn/datasets/ESL.mixture.rda"))
+names(ESL.mixture)
+rm(x,y); attach(ESL.mixture)
+
+# Fitting non-linear SVM
+plot(x,col=y+1)
+dat = data.frame(y=factor(y), x)
+fit.nl = svm(factor(y)~., data=dat, scale=FALSE, kernel="radial", cost=5)
+
+# Plotting
+x.grid = expand.grid(X1=px1, X2=px2)  # px1, px2 are part of ESL.mixture
+y.grid = predict(fit.nl, x.grid)
+plot(x.grid, col=as.numeric(y.grid), pch=20, cex=0.5)
+points(x, col=y+1, pch=20)
+
+pred.f = predict(fit.nl, x.grid, decision.values=TRUE) # function value, not class
+pred.f = attributes(pred.f)$decision #function value is returned as an "attribute"
+
+plot(x.grid, col=as.numeric(y.grid), pch=20, cex=0.5)
+points(x, col=y+1, pch=20)
+points(x[fit.nl$index,], pch=5, cex=2)
+contour(px1,px2, matrix(pred.f,69,99), level=0, add=TRUE) # 0 is the threshold
+contour(px1,px2, matrix(prob,69,99), level=0.5, add=TRUE, col="blue") #truth
+```
+
+### Example 2
+
+```{r}
+set.seed(1)
+x = matrix(rnorm(200*2), ncol=2)
+x[1:100,] = x[1:100,] + 2
+x[101:150,] = x[101:150,] - 2
+y = c(rep(1,150), rep(2,50))
+dat = data.frame(X1 = x[,1], X2 = x[,2], y = as.factor(y))
+
+plot(x, col=y+2, pch=19)
+
+train = sample(200,100)
+svm.radial = svm(y~., data=dat[train,], kernel="radial", gamma=1, cost=1)
+summary(svm.radial)
+table(dat$y[svm.radial$index])
+#plot(svm.radial, dat[train,])
+
+x.grid = make.grid(x)
+y.grid = predict(svm.radial, x.grid)
+plot(x.grid, col=c("red","blue")[as.numeric(y.grid)], pch=20, cex=.5)
+points(x, col=y+2, pch=19)
+#points(x[svm.radial$index,], pch=5, cex=2)
+
+# Increasing Cost to reduce training error - more irregular boundary
+svm.radial.2 = svm(y~., data=dat[train,], kernel="radial", gamma=1, cost=1e5)
+summary(svm.radial.2)
+y.grid.2 = predict(svm.radial.2, x.grid)
+plot(x.grid, col=c("red","blue")[as.numeric(y.grid.2)], pch=20, cex=.5)
+points(x, col=y+2, pch=19)
+
+# Cross-validation to calibrate 'Gamma' and 'Cost'
+svm.tune = tune(svm, y~., data=dat[train,], kernel = "radial",
+                ranges=list(
+                  cost  = c(0.1, 1, 10, 100, 1000),
+                  gamma = c(0.5, 1, 2, 3, 4) 
+                ))
+
+summary(svm.tune)
+
+# Predict using CV selected model
+table(
+  true = dat[-train,"y"],
+  pred = predict(svm.tune$best.model, newdata=dat[-train,])
+)
+
+# Error of ~11%
+1-88/(77+22)
+```
+
+## ROC Curves
+
+**performance()** - all kinds of predictor evaluations are performed using this.  
+**prediction()** - Function to create prediction objects
+
+```{r}
+rocplot = function(pred, truth,...){
+  pred.obj = prediction(pred, truth)
+  perf     = performance(pred.obj, "tpr", "fpr")
+  plot(perf, ...)
+}
+
+par(mfrow=c(1,2))
+
+# Fitting & Prediction on Training Data
+svmfit.opt = svm(y~., data=dat[train,], kernel="radial",
+                 gamma=0.5, cost=1, decision.values=TRUE)
+fitted = attributes(
+         predict(svmfit.opt, dat[train,], decision.values=TRUE))$decision.values
+rocplot(-fitted, dat[train,"y"], main= "Training Data") 
+#So that -ve values correspond to Class 1 and +ve values to Class 2
+
+# Fitting with higher 'Gamma' for more flexible fit
+svmfit.flex = svm(y~., data=dat[train,], kernel="radial",
+                 gamma=50, cost=1, decision.values=TRUE)
+fitted.flex = attributes(
+         predict(svmfit.flex, dat[train,], decision.values=TRUE))$decision.values
+rocplot(-fitted.flex, dat[train,"y"], add=T, col="red")
+
+# Fitting on Test data
+fitted.test = attributes(
+         predict(svmfit.opt, dat[-train,], decision.values=TRUE))$decision.values
+rocplot(-fitted.test, dat[-train,"y"], main="Test Data")
+
+fitted.test.flex = attributes(
+         predict(svmfit.flex, dat[-train,], decision.values=TRUE))$decision.values
+rocplot(-fitted.test.flex, dat[-train,"y"], add=T, col="red")
+
+```
+
+## SVM - Multiple Class Classification
+
+Either one-vs-one approach or one-vs-all approach can be used.
+
+```{r}
+set.seed(1)
+x = matrix(rnorm(200*2), ncol=2)
+x[1:100,] = x[1:100,] + 2
+x[101:150,] = x[101:150,] - 2
+x = rbind(x, matrix(rnorm(50*2), ncol=2))
+y = c(rep(1,150), rep(2,50), rep(0,50))
+
+x[y==0,2] = x[y==0,2] + 2
+dat = data.frame(x=x, y=as.factor(y))
+par(mfrow=c(1,1))
+
+plot(x, col=y+1, pch=19)
+
+svm.multiclass = svm(y~., data=dat, kernel="radial", cost=10, gamma=1)
+plot(svm.multiclass, dat)
+
+```
+## Application to Gene Expression Data
+
+```{r}
+names(Khan)
+dim(Khan$xtrain); dim(Khan$xtest)
+
+table(Khan$ytrain)
+table(Khan$ytest)
+
+# Due to 'p' >> 'n', we select linear kernel to avoid allowing more flexibility
+dat = data.frame(x = Khan$xtrain, y = as.factor(Khan$ytrain))
+svm = svm(y~., data=dat, kernel="linear", cost=1e5)
+summary(svm)
+
+table(svm$fitted, dat$y)
+
+# Test data
+pred = predict(svm, data.frame(x = Khan$xtest, y = as.factor(Khan$ytest)))
+table(pred=pred, true= Khan$ytest)
+
+```
+
+
+## Quiz question
+
+```{r}
+library(MASS) # for multivariate normal distribution
+
+set.seed(42)
+error.svm = double(50)
+error.log = double(50)
+
+for(i in 1:50){
+
+# 50 obs for TRAINING, 200 for TESTING
+x0 = mvrnorm(n=250, mu=rep(0, 10),         Sigma = diag(10))
+x1 = mvrnorm(n=250, mu=rep(c(1,0),each=5), Sigma = diag(10))
+y0 = rep(0,250)
+y1 = rep(1,250)
+
+y.train = c(y0[1:50],y1[1:50])
+x.train = rbind(x0[1:50,],x1[1:50,])
+dat.train = data.frame(y = y.train, x = x.train)
+dat.test  = data.frame(y = c(y0[51:250],y1[51:250]),
+                       x = rbind(x0[51:250,],x1[51:250,]))
+
+# fitting SVM - radial or linear
+fit.svm  = svm(factor(y)~., data=dat.train, kernel="linear")
+pred.svm = predict(fit.svm, dat.test) 
+
+# fitting logistic
+fit.log  = glm(factor(y)~., data=dat.train, family="binomial")
+pred.log = predict(fit.log, newdata=dat.test, type="response") 
+pred.log = ifelse(pred.log>0.5,1,0)
+
+error.svm[i] = 1-mean(c(y0[51:250],y1[51:250])==pred.svm)
+error.log[i] = 1-mean(c(y0[51:250],y1[51:250])==pred.log)
+}
+mean(error.svm)   #0.16 for radial, 0.15 for linear
+mean(error.log)   #0.15 .. logistic is similar to SVM with linear kernel
+
+```
+
+
+
