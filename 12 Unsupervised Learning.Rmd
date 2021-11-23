@@ -1,0 +1,288 @@
+---
+title: "12 Unsupervised Learning"
+author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
+output: pdf_document
+---
+
+## Setup
+
+USArrests dataset is part of R. 
+
+```{r}
+dimnames(USArrests)
+dim(USArrests)
+summary(USArrests)
+apply(USArrests,2,mean); apply(USArrests,2,var)
+```
+
+## PCA
+
+Variances for individual variables matter in PCA analysis. In this context, it's
+best to standardize. **Rotations** are same as **loadings**. PCA is invariant to 
+sign-flip.
+
+```{r}
+pca.out = prcomp(USArrests, scale=TRUE)
+pca.out 
+names(pca.out)
+biplot(pca.out, scale=0, cex=0.4, pch=19)
+
+# Flipping Sign
+pca.out$rotation = -pca.out$rotation
+pca.out$x = -pca.out$x
+biplot(pca.out, scale=0, cex=0.4, pch=19)
+
+pve = pca.out$sdev^2/sum(pca.out$sdev^2)
+par(mfrow=c(1,2))
+plot(pve, xlab="PC", ylab="Variance Explained", type="b", ylim=c(0,1))
+plot(cumsum(pve), xlab="PC", ylab="Cumm. Variance Explained", type="b", ylim=c(0,1))
+```
+
+## PCA - Matrix Completion
+
+```{r}
+# X = data.matrix(USArrests)
+# X.std = scale(X)
+# Z.pca = prcomp(X.std)$x
+# Phi.inv = solve(prcomp(X.std)$rotation)
+# X.recov = Z.pca %*% Phi.inv
+# X.std[1:5,]; X.recov[1:5,]  # gives same result
+
+# We scale the data to begin with - stylized example to avoid de-scaling later
+X = data.matrix(scale(USArrests))
+pca.X = prcomp(X)   # by default "scale = FALSE"
+summary(pca.X)
+# pca.X$rotation
+# pca.X$x[1:5,]
+
+# Omitting data at random
+nomit = 20
+set.seed(15)
+in.row = sample(1:50,nomit)
+in.col = sample(1:4, nomit, replace=TRUE)
+index.na = cbind(in.row, in.col)
+X.omit = X
+X.omit[index.na] = NA
+
+# Create Xhat where NA is replaced with average values
+Xbar = colMeans(X.omit, na.rm=TRUE)
+Xhat = X.omit
+for(i in 1:ncol(Xhat)){
+  Xhat[,i][is.na(Xhat[,i])] = Xbar[i]
+}
+
+# Function to reconstruct X from M PCs
+Reconstruct.X <- function(X, M=1){
+  # fit PCA -> get scores -> inverse of Loadings -> reconstructed X
+  res = prcomp(X)
+  as.matrix(res$x[,1:M]) %*% solve(res$rotation)[1:M,]
+}
+
+# Evaluating missing values using PCA
+thresh = 1e-7
+rel.error = 1
+iter = 0
+ismiss = is.na(X.omit)
+mssold = mean((scale(X.omit, Xbar, FALSE)[!ismiss])^2)
+mss0 = mean(X.omit[!ismiss]^2)
+
+while(rel.error > thresh){
+  iter = iter+1
+  Xnew = Reconstruct.X(Xhat, M=1)
+  #Xnew = fit.svd(Xhat,M=1)
+  Xhat[ismiss] = Xnew[ismiss]
+  
+  #mean squared error of the non-missing elements
+  mss = mean(((X.omit-Xnew)[!ismiss])^2)
+  rel.error = (mssold-mss)/mss0
+  mssold = mss
+  
+  cat("Iter:", iter, "MSS: ", mss, "Rel Error", rel.error, "\n")
+}
+
+cor(Xhat[ismiss], X[ismiss])
+plot(Xhat[ismiss], X[ismiss])
+
+# Singular Value Decomposition - v:loadings, u:std. scores, d:std. deviations 
+svd(X)$v
+
+# Reconstructing X using SVD
+fit.svd = function(X, M=1){
+  res = svd(X)
+  res$u[,1:M] %*% (res$d[1:M]*t(res$v[,1:M])) # transpose = inverse in this case
+}
+
+```
+
+## K-Means Clustering
+
+```{r}
+# Create Stylized data
+set.seed(101)
+x=matrix(rnorm(100*2), ncol=2)
+x.mean = matrix(rnorm(8,sd=4),4,2)
+cluster.assign = sample(1:4, 100, replace=TRUE)
+x = x + x.mean[cluster.assign,]
+plot(x, col=cluster.assign, pch=19)
+
+# Running K-Means
+km.out = kmeans(x, 4, nstart=15)  #15 random starts
+km.out
+plot(x, col=km.out$cluster, cex=2, pch=1, lwd=2) #predicted clusters
+points(x, col=cluster.assign, pch=19)            #true cluster
+legend("topright", c("Pred", "Act"), pch=c(1,19))
+
+# Running K-Means
+km.out = kmeans(x, 6, nstart=15)  #15 random starts
+km.out
+plot(x, col=km.out$cluster, cex=2, pch=1, lwd=2) #predicted clusters
+points(x, col=cluster.assign, pch=19)            #true cluster
+legend("topright", c("Pred", "Act"), pch=c(1,19))
+
+```
+
+## Hierarchical Clustering
+
+### Types of linkage approaches:
+* **Complete**: Largest value among pair-wise distances
+* **Single**: Smallest value among pair-wise distances
+* **Average**: Average value among pair-wise distances
+* **Centroid**: Distance between means
+
+**Distance()** uses **Euclidean** distance by default.
+
+```{r}
+hc.complete = hclust(dist(x), method="complete")
+plot(hc.complete, cex=0.4)
+
+hc.single = hclust(dist(x), method="single")
+plot(hc.single, cex=0.4)
+
+hc.avg = hclust(dist(x), method="average")
+plot(hc.avg, cex=0.4)
+
+# Cutting Tree
+hc.cut = cutree(hc.complete, 4)
+table(pred=hc.cut, true=cluster.assign)
+table(pred=km.out$cluster, true=cluster.assign)
+
+# Plotting True Clusters
+plot(hc.complete, labels=cluster.assign, cex=0.5)
+
+# Comparing all three linkages
+par(mfrow=c(1,3))
+plot(hc.complete, cex=0.1, main="Complete linkage")
+plot(hc.single, cex=0.1, main="Single linkage")
+plot(hc.avg, cex=0.1, main="Average linkage")
+par(mfrow=c(1,1))
+```
+
+## Example - NC160 data
+
+Unsupervised techniques are often used in the analysis of genomic data. **NCI60** 
+cancer cell line microarray data, consists of 6,830 gene expression measurements 
+on 64 cancer cell lines
+
+```{r}
+library(ISLR2)
+nci.labs = NCI60$labs
+nci.data = NCI60$data
+dim(nci.data)
+table(nci.labs)
+
+# Plotting First 3 PCs
+pr.out = prcomp(nci.data, scale=TRUE)
+summary(pr.out)$importance[,1:5]
+
+color <- function(vec){
+  cols <- rainbow(length(unique(vec)))
+  return(cols[as.numeric(as.factor(vec))])
+}
+
+par(mfrow=c(1,2))
+plot(pr.out$x[,1:2], col=color(nci.labs), pch=19, xlab="Z1", ylab="Z2")
+plot(pr.out$x[,c(1,3)], col=color(nci.labs), pch=19, xlab="Z1", ylab="Z3")
+```
+On the whole, cell lines corresponding to a single cancer type do tend to have 
+similar values on the first few principal component score vectors. This indicates 
+that cell lines from the same cancer type tend to have pretty similar gene expression
+levels.
+
+```{r}
+# Evaluating PVE
+pve = 100*pr.out$sdev^2/sum(pr.out$sdev^2)
+plot(pve, type="o", ylab="PVE", xlab="PC", col="blue")
+plot(cumsum(pve), type="o", ylab="Cumm. PVE", xlab="PC", col="maroon")
+
+sd.data = scale(nci.data)
+
+# Plotting Hierarchical Tree
+par(mfrow=c(1,3))
+plot(hclust(dist(sd.data), method="complete"), cex=0.4, main="Complete linkage")
+plot(hclust(dist(sd.data), method="single"), cex=0.4, main="Single linkage")
+plot(hclust(dist(sd.data), method="average"), cex=0.4, main="Average linkage")
+
+# Cutting Tree
+hc.comp = hclust(dist(sd.data), method="complete")
+hc.cut = cutree(hc.comp, 4)
+table(pred=hc.cut, true=nci.labs)
+
+par(mfrow=c(1,1))
+plot(hc.comp, labels=nci.labs, cex=0.4)
+abline(h=139,col="red")
+
+# Compare with K-mean clustering
+set.seed(2)
+km.out = kmeans(sd.data, 4, nstart=20)
+km.clusters = km.out$cluster
+table(k.mean=km.clusters, hc=hc.cut)
+
+# Clustering on first few PCAs instead
+hc.out = hclust(dist(pr.out$x[,1:5]), method = "complete")
+plot(hc.out, labels=nci.labs, main="HC using first 5 PCAs", cex=0.4)
+table(PCA = cutree(hc.out,4), nci.labs)
+```
+
+
+
+## Quiz
+
+```{r}
+load("10.R.Rdata")
+
+x.full = rbind(x, x.test)
+pca.x  = prcomp(x.full, scale=TRUE, retx=TRUE)
+
+# Partial Variance Explained
+sum(pca.x$sdev[1:5]^2)/sum(pca.x$sdev^2)
+
+# Regression using PCAs
+dat = data.frame(y = c(y, y.test), z = pca.x$x[,1:5])
+train = seq(1,300)
+pca.mod = lm(y~., data=dat, subset=train)
+summary(pca.mod)
+
+# Predict & MSE
+y.pred = predict(pca.mod, newdata=dat[-train,])
+sqrt(mean((y.test-y.pred)^2))
+
+# Compare with Simple Linear Regression
+dat.train = data.frame(y, x)
+dat.test  = data.frame(y.test, x.test)
+slr.mod = lm(y~., data=dat.train)
+
+y.pred.slr = predict(slr.mod, newdata=dat.test)
+sqrt(mean((y.test-y.pred.slr)^2))
+
+
+# Scores - Manually or through PRComp
+temp1 = as.matrix(scale(x.full)) %*% pca.x$rotation
+temp2 = pca.x$x
+temp1[1,1:5]
+temp2[1,1:5]
+
+```
+
+
+
