@@ -1,0 +1,148 @@
+---
+title: "11 Survival Analysis"
+author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
+output: pdf_document
+---
+
+## Setup
+
+Using **Survival** library.  
+Using **BrainCancer** dataset.  
+Function **Surv()** for creating a survival object, and **survfit() (both fitting 
+& predicting) and coxph()** for model fitting.  
+
+```{r}
+library(survival)
+library(ISLR2)
+names(BrainCancer)
+dim(BrainCancer)
+attach(BrainCancer)
+table(sex)
+table(status)
+```
+
+## Kaplan-Meier Survival Curves
+
+Status = 1 indicates an uncensored observation, and status = 0 indicates
+a censored observation.
+
+```{r}
+fit.surv = survfit(Surv(time, status)~1)
+plot(fit.surv, xlab="Months", ylab="Est. Probability of Survival")
+summary(fit.surv)
+
+fit.sex = survfit(Surv(time, status)~sex)
+plot(fit.sex, xlab="Months", ylab="Est. Probability of Survival", col=c(2,4))
+legend("bottomleft", levels(sex), col=c(2,4), lty=1)
+
+# Log-Rank test
+logrank.test = survdiff(Surv(time, status)~sex)
+logrank.test  # p-value of 0.2 indicates null cannot be rejected
+```
+
+## Cox Proportional Hazard model
+
+The diagnosis variable has been coded so that the baseline corresponds to meningioma. 
+The results indicate that the risk associated with HG glioma is more than eight times 
+(i.e. $e^{2.15}= 8.62$) the risk associated with meningioma. In addition, larger values
+of the Karnofsky index, ki, are associated with lower risk, i.e. longer survival.
+
+```{r}
+# Only uses "sex" as the predictor
+fit.cox = coxph(Surv(time, status)~sex)
+summary(fit.cox)  # p=0.2, no evidence for differenve in survival times by sex
+
+# Fitting model with more predictors
+fit.all = coxph(Surv(time,status)~sex+diagnosis+loc+ki+gtv+stereo)
+fit.all
+
+# Plotting survival curves for different diagnosis type
+modal.data = data.frame(diagnosis = levels(diagnosis),
+                        sex = rep("Female", 4),
+                        loc = rep("Supratentorial", 4),
+                        ki  = rep(mean(ki),4),
+                        gtv = rep(mean(gtv),4),
+                        stereo = rep("SRT", 4)
+                        )
+survplots = survfit(fit.all, newdata=modal.data)
+plot(survplots, xlab="Months", ylab="Survival Probability", col=2:5)
+legend("bottomleft", levels(diagnosis), col=2:5, lty=1, cex=0.7)
+```
+
+## Publication Data
+
+```{r}
+# Kaplan-Meier curves
+fit.posres = survfit(Surv(time, status)~posres, data=Publication)
+fit.posres
+plot(fit.posres, xlab="Months", ylab=" Prob. of not being published", col=3:4)
+legend("topright", c("Neg result", "Pos result"), col=3:4, lty=1, cex=0.7)
+
+# Cox's Proportional Hazard - only 1 predictor ('positive results')
+fit.pub = coxph(Surv(time, status) ~ posres, data = Publication)
+fit.pub
+
+logrank.test = survdiff(Surv(time, status)~posres, data = Publication)
+logrank.test
+
+# Cox's Proportional Hazard - all predictors
+fit.pub2 = coxph(Surv(time, status) ~ . -mech, data = Publication)
+fit.pub2
+```
+
+## Call Center Data - simulated
+
+Simulated survival data using the sim.survdata() function, which is part of the 
+**coxed** library. The simulated data will represent the observed wait times 
+(in seconds) for 2,000 customers who have phoned a call center. In this context, 
+censoring occurs if a customer hangs up before his or her call is answered.  
+
+The **sim.survdata()** function allows us to specify the maximum possible failure 
+time, which in this case corresponds to the longest possible wait time for a 
+customer - set at 1,000 seconds.  
+
+We find that differences between centers are highly significant, as are
+differences between times of day.  
+
+```{r}
+set.seed(4)
+N = 2000
+Operators = sample(5:15, N, replace=T)
+Center = sample(c("A","B","C"), N, replace = T)
+Time = sample(c("Morn.", "After.", "Even."), N, replace=T)
+X = model.matrix(~Operators + Center + Time)
+X = X[,-1]
+
+true.beta = c(0.04, -0.3, 0, 0.2, -0.2)
+
+# Baseline hazard function - with one argument, representing time
+h0 = function(t) return(0.00001 * t)
+
+library(coxed)
+queue = sim.survdata(N=N, T=1000, X=X, beta=true.beta, hazard.fun=h0)
+names(queue)
+
+head(queue$data)
+mean(queue$data$failed) # 90% of calls were answered
+
+# Kaplan-Meier survival curves
+par(mfrow=c(1,2))
+
+fit.Center = survfit(Surv(y, failed)~Center, data=queue$data)
+plot(fit.Center, xlab="Seconds", ylab="Prob of still being on hold", col=2:4)
+legend("topright", c("Center A", "Center B", "Center C"),col=2:4, lty=1, cex=0.7)
+survdiff(Surv(y, failed)~Center, data=queue$data)
+
+fit.Time = survfit(Surv(y, failed)~Time, data=queue$data)
+plot(fit.Time, xlab="Seconds", ylab="Prob of still being on hold", col=2:4)
+legend("topright", c("Afternoon", "Evening", "Morning"),col=2:4, lty=1, cex=0.7)
+survdiff(Surv(y, failed)~Time, data=queue$data)
+
+# Cox's Proportional Hazard
+fit.queue = coxph(Surv(y, failed)~., data = queue$data)
+fit.queue
+```
+
+The coefficient estimates resulting from the Cox model are fairly consistent with 
+true estimates of 0.04, -0.3, 0, 0.2, -0.2.
