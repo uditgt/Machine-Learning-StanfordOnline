@@ -1,0 +1,467 @@
+---
+title: "10 Deep Learning"
+author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
+output: pdf_document
+---
+
+## Fitting Linear & Lasso Models
+
+The **pipe operator %>%** passes the previous term keras model sequential pipe as 
+the first argument to the next function, and returns the result.
+
+```{r}
+library(ISLR2)
+library(ggplot2)
+library(magrittr) # for pipe operator
+library(keras)
+
+names(Hitters)
+summary(Hitters)
+hit.data = na.omit(Hitters)
+
+# Split data into test and train
+n = nrow(hit.data)
+set.seed(13)
+test = sample(1:n, n/3)
+
+# Fitting linear model
+ln.fit = lm(Salary~., data=hit.data[-test,])
+ln.pred = predict(ln.fit, hit.data[test,])
+sqrt(mean((ln.pred - hit.data$Salary[test])^2))  # RMSE = 341
+
+# Fitting lasso using glmnet - need to create model matrix
+library(glmnet)
+x = model.matrix(Salary~. -1 , data=hit.data) %>% scale()
+y = hit.data$Salary
+
+cvfit = cv.glmnet(x[-test,], y[-test], type.measure = "mae")
+cvpred = predict(cvfit, x[test,], s = "lambda.min")
+sqrt(mean((cvpred - hit.data$Salary[test])^2))  # RMSE = 359
+```
+
+## Fitting Neural Network
+
+The object modnn has a single hidden layer with 50 hidden units, and a ReLU activation 
+function. It then has a dropout layer, in which a random 40% of the 50 activations 
+from the previous layer are set to zero during each iteration of the stochastic gradient 
+descent algorithm. Finally, the output layer has just one unit with no activation 
+function, indicating that the model provides a single quantitative output.  
+
+**units** - dimensionality of output space.  
+**input_shape** - Dimensionality of the input (integer) not including the 
+samples axis. This argument is required when using this layer as the first layer in a model.
+
+```{r}
+# Creating a network and adding details - o/p is single quantitative output
+modnn = keras_model_sequential() %>% 
+  layer_dense(units=50, activation="relu", input_shape = ncol(x)) %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 1)
+summary(modnn)
+
+# Add details on fitting algorithm (compile passes the info to python instance)
+modnn %>% compile(loss="mse", optimizer = optimizer_rmsprop(), 
+                  metrics = list("mean_absolute_error"))
+
+# Fit the model - 2 parameters (epochs and batch_size)
+history = modnn %>% fit(x[-test,], y[-test], epochs=1500, batch_size=32,
+                        validation_data = list(x[test,], y[test]))
+plot(history)
+npred = predict(modnn, x[test,])
+sqrt(mean((npred - hit.data$Salary[test])^2))  # RMSE = 339
+```
+
+## Fitting Neural Network - MNIST Digit Data
+
+There are 60,000 images in the training data and 10,000 in the test data.
+The images are 28x28, and stored as a 3D array.
+
+Neural networks are somewhat sensitive to the scale of the inputs. Here the inputs
+are eight-bit grayscale values between 0 and 255, so we scale to the unit interval.
+```{r}
+mnist = dataset_mnist()
+x_train = mnist$train$x
+y_train = mnist$train$y
+dim(x_train)
+x_test = mnist$test$x
+y_test = mnist$test$y
+dim(x_test)
+
+get_matrix = function(x){
+  array_reshape(x, c(nrow(x), 28*28))
+}
+
+x_train = get_matrix(x_train)
+x_test  = get_matrix(x_test)
+
+# example
+to_categorical(head(y_train), 10)
+
+y_train = to_categorical(y_train, 10) #convert to categorical w/ 10 classes
+y_test  = to_categorical(y_test, 10)
+
+
+# scaling - Neural networks are sensitive to scale
+x_train = x_train/255
+x_test  = x_test/255
+
+# Create a Neural Network model
+modelnn <- keras_model_sequential() 
+modelnn %>% 
+  layer_dense(units = 256, activation = 'relu', input_shape = c(784)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 10, activation = 'softmax')
+summary(modelnn)
+
+# Details for fitting
+modelnn %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_rmsprop(),
+  metrics = c('accuracy')
+)
+
+# Fit the model
+system.time(
+history <- modelnn %>% fit(x_train, y_train, epochs=30, batch_size=128,
+                            validation_split=0.2))
+plot(history, smooth=FALSE)
+
+# Calculate accuracy
+accu = function(pred, truth) {mean(drop(pred)== drop(truth))}
+
+ypred = modelnn %>% predict(x_test) %>% k_argmax()
+accu(ypred$numpy(), mnist$test$y)  #98%
+
+# Fitting a single layer model
+modellr = keras_model_sequential() %>% layer_dense(input_shape=784, units=10, 
+                                                   activation="softmax")
+summary(modellr)
+
+modellr %>% compile(loss="categorical_crossentropy", 
+                     optimizer=optimizer_rmsprop(),
+                     metrics=c("accuracy"))
+modellr %>% fit(x_train, y_train, epochs=30, batch_size=128, validation_split=0.2)
+ypred = modellr %>% predict(x_test) %>% k_argmax()
+accu(ypred$numpy(), mnist$test$y)  #90%
+``` 
+
+## CNN - Convolutional Neural Network
+
+The array of 50,000 training images has 4 dimensions: each color image is represented
+as a set of 3 channels, each of which consists of 32x32 8bit pixels.
+
+```{r}
+#cifar = dataset_cifar100()
+setwd("C:/Users/uditg/Documents/R scripts")
+cifar = readRDS("cifar100_object")
+names(cifar)
+
+x_train <- cifar$train$x
+g_train <- cifar$train$y
+x_test  <- cifar$test$x
+g_test  <- cifar$test$y
+dim(x_train)
+range(x_train[1,,,1])
+
+x_train = x_train/255
+x_test  = x_test/255
+y_train = to_categorical(g_train,100)
+dim(y_train)
+
+# plotting sample images
+library(jpeg)
+par(mar=c(0,0,0,0), mfrow=c(5,5))
+index = sample(seq(50000),25)
+for (i in index) plot(as.raster(x_train[i,,,]))
+
+# Moderately sized CNN model
+modelcnn = keras_model_sequential() %>% 
+  layer_conv_2d(filters=32, kernel_size=c(3,3),
+                padding = "same", activation="relu",
+                input_shape = c(32, 32, 3)) %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_conv_2d(filters=64, kernel_size=c(3,3),
+                padding="same", activation="relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_conv_2d(filters=128, kernel_size=c(3,3),
+                padding="same", activation="relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_conv_2d(filters=256, kernel_size=c(3,3),
+                padding="same", activation="relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_flatten() %>%
+  layer_dropout(rate=0.5) %>%
+  layer_dense(units=512, activation="relu") %>%
+  layer_dense(units=100, activation="softmax")
+summary(modelcnn)
+
+modelcnn %>% compile(loss="categorical_crossentropy", optimizer=optimizer_rmsprop(),
+                  metrics=c("accuracy"))
+history = modelcnn %>% fit(x_train, y_train, epochs=30,
+                        batch_size=128, validation_split=0.2)
+ypred = modelcnn%>% predict(x_test) %>% k_argmax()
+accu(ypred$numpy(), g_test)  #45%
+```
+
+## CNN Pretrained Models - ImageNet
+
+```{r}
+img_location = "CNN_images"
+image_names = list.files(img_location)
+num_images = length(image_names)
+x = array(dim=c(num_images, 224, 224, 3))
+for(i in 1:num_images){
+  img_path = paste(img_location, image_names[i], sep="/")
+  img = image_load(img_path, target_size=c(224,224))
+  x[i,,,] = image_to_array(img)
+}
+x = imagenet_preprocess_input(x)
+
+modelpre = application_resnet50(weights="imagenet")
+#summary(modelpre)
+pred6 = modelpre %>% predict(x) %>% imagenet_decode_predictions(top=3)
+names(pred6) = image_names
+print(pred6)
+```
+
+## IMDb Document Classification
+
+Using:
+1. Logistic regression w/ Lasso regularization
+2. Bag-of-words model
+3. **RNN (handles vector embedding too)**
+
+#### Logistic regression w/ Lasso regularization
+We score each document for the presence or absence of each of the words in
+a language dictionary - in this case an English dictionary. If the dictionary
+contains M words, that means for each document we create a binary feature
+vector of length M, and score a 1 for every word present, and 0 otherwise.
+
+```{r}
+max_features = 10000
+imdb = dataset_imdb(num_words=max_features)
+max(unlist(x_train))
+c(c(x_train, y_train), c(x_test, y_test)) %<-% imdb
+
+x_train[[1]][1:12]
+
+word_index <- dataset_imdb_word_index()
+
+# Text codes are off by 3 because of adjustments, made explicitly below
+word = names(word_index)  #words in the dictionary
+idx  = unlist(word_index, use.names=FALSE) #paired values
+word = c("<PAD>","<START>","<UNK>","<UNUSED>",word) #appending values
+idx  = c(0:3, idx+3)
+  
+decode_review = function(text){
+  words= word[match(text, idx, 2)] #returns 2 when no match
+  paste(words, collapse = " ")
+}
+
+decode_review(x_train[[1]][1:12])
+y_train[1]  # 1 = Good
+decode_review(x_train[[3]][1:12])
+y_train[3]  # 0 = Bad
+
+# One-hot encoding
+library(Matrix)
+one_hot <- function(sequences, dimension){
+  # create 'i' - row #
+  seqlen = sapply(sequences, length)
+  n = length(seqlen)
+  row.ind = rep(1:n, seqlen)
+  
+  # create 'j' - column #
+  col.ind = unlist(sequences)
+  
+  #i,j specify location of non-zero elements
+  sparseMatrix(i=row.ind, j=col.ind, dims=c(n, dimension)) 
+}
+
+
+x_train_1h = one_hot(x_train, 10000)
+x_test_1h = one_hot(x_test, 10000)
+dim(x_train_1h)
+nnzero(x_train_1h)/(25000*10000) #only 1.3% contains non-zero value (i.e. 1)
+```
+
+First we fit a lasso logistic regression model using glmnet() on the training
+data, and evaluate its performance on the validation data. Finally, we plot
+the accuracy, acclmv, as a function of the shrinkage parameter, $\lambda$.
+
+```{r}
+library(glmnet)
+
+#Validation set of 2000... 23000 for training
+set.seed(3)
+ival = sample(seq(along=y_train), 2000)
+
+fitlm = glmnet(x_train_1h[-ival,], y_train[-ival], family = "binomial", 
+               standardize = FALSE) #alpha =1 by default, Lasso
+classlm = predict(fitlm, x_train_1h[ival,]) > 0 
+acclm = apply(classlm, 2, accu, y_train[ival]>0)  #y_train is argument to accu
+
+par(mar=c(4,4,4,4), mfrow=c(1,2))
+plot(-log(fitlm$lambda), acclm)
+
+# performance on test data: ~85%
+classlm.test = predict(fitlm, x_test_1h) > 0 
+acclm.test = apply(classlm.test, 2, accu, y_test>0)
+plot(-log(fitlm$lambda), acclm.test)
+```
+#### Bag-of-words model
+
+Next we fit a fully-connected neural network with two hidden layers, each
+with 16 units and ReLU activation
+
+```{r}
+modelbow = keras_model_sequential() %>%
+  layer_dense(units=16, activation="relu", input_shape=c(10000)) %>%
+  layer_dense(units=16, activation="relu") %>%
+  layer_dense(units=1, activation="sigmoid")
+
+modelbow %>% compile(optimizer="rmsprop", loss="binary_crossentropy", 
+                     metrics=c("accuracy"))
+history = modelbow %>% fit(x_train_1h[-ival,], y_train[-ival],
+                           epochs=20, batch_size=512,
+                           validation_data=list(x_train_1h[ival,],y_train[ival]))
+plot(history)
+```
+
+#### RNN - Recurrent Neural Network
+
+Sentiment analysis with IMDb data.
+
+```{r}
+wc = sapply(x_train, length)
+median(wc)      #median word count 178
+mean(wc<=500)   #92% of reviews have <500 words
+
+# keeps last 500 words/ adds padding in the beginning
+x_train <- pad_sequences(x_train, maxlen=500)
+x_test  <- pad_sequences(x_test , maxlen=500)
+dim(x_train); dim(x_test)
+```
+
+At this stage, each of the 500 words in the document is represented using an integer
+corresponding to the location of that word in the 10,000-word dictionary.
+The **first layer** of the RNN is an embedding layer of size 32, which will be
+learned during training. This layer **one-hot encodes each document as a
+matrix of dimension 500×10,000**, and then maps these 10,000 dimensions
+down to 32.
+
+```{r}
+modelrnn = keras_model_sequential() %>%
+  layer_embedding(input_dim = 10000, output_dim = 32) %>%
+  layer_lstm(units=32) %>%
+  layer_dense(units=1, activation="sigmoid")
+
+modelrnn %>% compile(optimizer="rmsprop", loss="binary_crossentropy",
+                     metrics=c("acc"))
+history = modelrnn %>% fit(x_train, y_train, epochs=10,
+                           batch_size=128,
+                           validation_data=list(x_test, y_test))
+plot(history)
+predy = predict(modelrnn, x_test) > 0.5
+mean(abs(y_test == as.numeric(predy)))
+
+```
+
+
+## Time Series Prediction
+
+1. AR model
+2. **RNN**
+
+
+#### AR model
+
+```{r}
+library(dplyr)
+
+xdata=data.matrix(NYSE[,c("DJ_return", "log_volume", "log_volatility")])
+istrain = NYSE[,"train"]  # True/ False
+xdata = scale(xdata)
+
+volume = data.frame(logvol = xdata[,"log_volume"],
+                    L1 = lag(xdata,1), L2 = lag(xdata,2),
+                    L3 = lag(xdata,3), L4 = lag(xdata,4), L5 = lag(xdata,5))
+colnames(volume) = c("logvol", "L1.ret", "L1.volm", "L1.vol", "L2.ret", "L2.volm",
+                     "L2.vol", "L3.ret", "L3.volm", "L3.vol", "L4.ret", "L4.volm",
+                     "L4.vol", "L5.ret", "L5.volm", "L5.vol") 
+
+volume = volume[-(1:5),]
+istrain = istrain[-(1:5)]
+
+#Fitting Linear AR model
+arfit = lm(logvol ~., data=volume[istrain,])
+arpred= predict(arfit, volume[!istrain,])
+summary(arfit)$r.squared
+
+# R-squared on test data ~41%
+1 - mean((arpred - volume[!istrain, "logvol"])^2)*(1/var(volume[!istrain, "logvol"]))
+
+volume.wk = data.frame(day=NYSE[-(1:5),"day_of_week"], volume)
+arfit.wk = lm(logvol~., data=volume.wk[istrain,])
+arpred.wk = predict(arfit.wk, volume.wk[!istrain,])
+
+# R-squared on test data ~46%
+1 - mean((arpred.wk - volume[!istrain, "logvol"])^2)*(1/var(volume[!istrain, "logvol"]))
+```
+
+#### RNN - Recurrent Neural Network
+
+Need to reshape the data, for RNN since it expects a sequence of L = 5 feature 
+vectors for each observation.
+
+Two forms of dropout for the units feeding into the hidden layer. The first is 
+for the input sequence feeding into this layer, and the second is for the previous
+hidden units feeding into the layer. The output layer has a single unit for the response.
+
+```{r}
+n = nrow(volume)
+xrnn = data.matrix(volume[,-1])
+xrnn = array(xrnn, c(n, 3, 5))
+dim(xrnn)
+
+xrnn = xrnn[,,5:1]  # reversing order of lag data... index 1 is back
+xrnn = aperm(xrnn, c(1,3,2)) # Transpose an array by permuting its dimensions
+dim(xrnn)
+
+modelrnn = keras_model_sequential() %>%
+  layer_simple_rnn(units=12, input_shape = list(5,3), dropout=0.1,
+                   recurrent_dropout = 0.1) %>%
+  layer_dense(units=1)
+
+modelrnn %>% compile(optimizer=optimizer_rmsprop(), loss="mse")
+
+history = modelrnn %>% fit(xrnn[istrain,,], volume[istrain,"logvol"],
+                           batch_size = 64, epochs = 200,
+            validation_data=list(xrnn[!istrain,,], volume[!istrain, "logvol"]))
+
+kpred = predict(modelrnn, xrnn[!istrain,,])
+
+#40% 
+1 - mean((kpred-volume[!istrain, "logvol"])^2)/var(volume[!istrain, "logvol"])
+
+
+# Fitting linear AR using RNN framework
+modelt = keras_model_sequential() %>% layer_flatten(input_shape=c(5,3)) %>%
+  layer_dense(units=1)
+modelt %>% compile(optimizer=optimizer_rmsprop(), loss="mse")
+
+history = modelt %>% fit(xrnn[istrain,,], volume[istrain,"logvol"],
+                           batch_size = 64, epochs = 50,
+            validation_data=list(xrnn[!istrain,,], volume[!istrain, "logvol"]))
+kpred = predict(modelt, xrnn[!istrain,,])
+
+#41%
+1 - mean((kpred-volume[!istrain, "logvol"])^2)/var(volume[!istrain, "logvol"])
+
+```
+
+
+
