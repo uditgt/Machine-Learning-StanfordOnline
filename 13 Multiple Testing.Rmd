@@ -1,0 +1,199 @@
+---
+title: "13 Multiple Testing"
+author: "By: Udit (based on ISLR)"
+geometry: "left=1cm,right=1cm,top=1cm,bottom=2cm"
+output: pdf_document
+---
+
+## Review of T-test
+
+Simple t-tests using 100 variables, each consisting of 10 observations The first 
+50 variables have a non-zero mean of 0.5 by design and variance of 1, while others
+have mean of 0.
+
+```{r}
+set.seed(6)
+x = matrix(rnorm(10*100),10,100)
+x[,1:50] = x[,1:50] + 0.5
+dim(x)
+
+t.test(x[,1],mu=0)
+
+p.values = rep(0,100)
+for(i in 1:100){
+  p.values[i] = t.test(x[,i], mu=0)$p.value
+  }
+    
+decision = ifelse(p.values <= 0.05, "Reject Null", "Do Not Reject")
+table(decision, true = c(rep("Reject Null",50), rep("Do Not Reject", 50)))
+```
+
+At $\alpha = 0.05$ we reject just 11 our of 50 false null hypotheses. And we would
+incorrectly reject 3 of the true null hypotheses.
+
+```{r}
+# Using Stronger Signal/Noise ratio
+x = matrix(rnorm(10*100),10,100)
+x[,1:50] = x[,1:50] + 1
+p.values = rep(0,100)
+for(i in 1:100){
+  p.values[i] = t.test(x[,i], mu=0)$p.value
+  }
+    
+decision = ifelse(p.values <= 0.05, "Reject Null", "Do Not Reject")
+table(decision, true = c(rep("Reject Null",50), rep("Do Not Reject", 50)))
+```
+
+
+## Family Wise Error Rate (FWER)
+
+```{r}
+
+m = 1:500
+fwer1 = 1 - (1-0.05)^m
+fwer2 = 1 - (1-0.01)^m
+fwer3 = 1 - (1-0.001)^m
+
+matplot(cbind(m,fwer1,fwer2, fwer3), type="l", ylim=c(0,1), col=c(2,3,4), lty=1,
+        ylab = "FWER", xlab = "# of Hypotheses",
+        main = "FWER: P(Rejecting atleast 1 True Null)")
+legend("bottomright", legend=c(0.05, 0.01, 0.001), col=c(2,3,4), lty=1)
+```
+
+## FWER - Fund Manager Dataset
+
+```{r}
+library(ISLR2)
+fund.mini <- Fund[,1:5]
+t.test(fund.mini[,1], mu=0)
+fund.p = rep(0,5)
+for (i in 1:5){
+  fund.p[i] = t.test(fund.mini[,i], mu=0)$p.value
+}
+
+fund.p
+
+# Bonderroni adjustment alpha/m
+p.adjust(fund.p, method="bonferroni")
+
+#Holm's adjustment
+p.adjust(fund.p, method = "holm")
+```
+
+Because the paired t-test below was conducted after visual inspection of the 5
+fund managers, in essence, we already carried out 5C2 pairwise comparison through
+visual inspection. Therefore the p-value should be adjusted for this using 
+**Tukey's HSD (Honest Significant Difference) method.**
+
+```{r}
+#Paired t-test
+apply(fund.mini, 2, mean)
+
+t.test(fund.mini[,1], fund.mini[,2], paired=T)
+
+returns = as.vector(as.matrix(fund.mini))
+manager = rep(c("1","2","3","4","5"), rep(50,5))
+a1 = aov(returns ~ manager) #ANOVA
+TukeyHSD(x = a1) #diff between M1 & M2 is no longer significant
+
+plot(TukeyHSD(x = a1))
+```
+## False Discovery Rate (FDR)
+
+Far too many tests to control for FWER (since that would be impossibly punitive
+and lead to extremely few 'discoveries'.) Instead, we focus on FDR: expected fration 
+of rejected null hypotheses that are actually false positives.
+
+```{r}
+fund.p = rep(0,2000)
+for (i in 1:2000){
+  fund.p[i] = t.test(Fund[,i],mu=0)$p.value
+}
+fund.p[1:5]
+
+# Benjamini-Hochberg adjustment 
+q.BH = p.adjust(fund.p, method="BH")
+q.BH[1:10] # q.value is the lower FDR at which that H0 can be rejected
+
+# Rejected Nulls for FDR of 10%
+sum(q.BH <= 0.1) # 146.. we can expect ~15 of these to be false positives
+
+# Bonferroni would be extremely punitive
+sum(fund.p <= (0.1/2000)) # 0 discoveries
+
+# BH method - arrange p-values, compare with q*j/m
+m = length(fund.p)
+p = sort(fund.p)
+q = .1
+idx = which(p < q*(1:m)/m)
+
+plot(p, log="xy", ylim=c(4e-6,1), ylab="P-value", xlab="Index", main="", pch=20, col="gray")
+points(idx, p[idx], col=4, pch=20)
+abline(a=0, b = (q/m), col=2, untf=TRUE)
+abline(h=0.1/2000, col=3)
+```
+
+## Resampling Approach
+
+```{r}
+attach(Khan) #Khan gene data
+x = rbind(xtrain, xtest)
+y = c(ytrain, ytest)
+table(y) # Four classes of cancer
+
+# Comparing 11 gene's difference b/w class 2 and 4
+x1 = x[which(y==2),]
+x2 = x[which(y==4),]
+t.out = t.test(x1[,11], x2[,11], var.equal=TRUE)
+t.out$statistic; t.out$p.value   # p-value based on 'theoretical' distribution
+
+# Re-sampling to build empirical distribution
+n1 = nrow(x1)
+n2 = nrow(x2)
+
+set.seed(1)
+b = 10000
+t.b = rep(NA,b)
+for(i in 1:b){
+  dat = sample(c(x1[,11],x2[,11])) # jumbles up all values
+  t.b[i] = t.test(dat[1:n1], dat[(n1+1):(n1+n2)], var=T)$statistic
+}
+mean(abs(t.b) >= abs(t.out$statistic)) #0.0416.. same as theoritical distribution
+
+hist(t.b, breaks=100, xlim=c(-4.2, 4.2), xlab="Null Distribution of Test Stat")
+lines(seq(-4.2,4.2,len=1000),dt(seq(-4.2,4.2,len=1000), df=(n1+n2-2))*1000)
+text(t.out$statistic, 350, paste("T = ", round(t.out$statistic,4), sep=""))
+```
+Calculating FDR for all 2,308 genes.
+
+```{r}
+m = 50  #taking 50 genes at random
+set.seed(1)
+index = sample(ncol(x), m)
+Ts = rep(NA, m)
+Ts.star = matrix(NA, ncol = m, nrow = b)
+for(j in 1:m){
+  k = index[j]
+  Ts[j] = t.test(x1[,k], x2[,k], var.equal=TRUE)$statistic
+  for (i in 1:b){
+    dat = sample(c(x1[,k],x1[,k]))
+    Ts.star[i,j] = t.test(dat[1:n1], dat[(n1+1):(n1+n2)], var.equal=TRUE)$statistic
+  }
+}
+
+cs = sort(abs(Ts))
+FDRs = Rs = Vs = rep(NA,m)
+for(j in 1:m){
+  Vs[j] = sum(abs(Ts.star) >= cs[j])/b     # V = false rejections
+  Rs[j] = sum(abs(Ts) >= cs[j])            # R = total rejected nulls.. 50:1
+  FDRs[j] = Vs[j]/Rs[j]
+}
+
+max(Rs[FDRs <= 0.1]) #6 out of 50 nulls can be rejected.. expect ~1 false positive
+max(Rs[FDRs <= 0.3]) #15 out of 50 nulls can be rejected.. expect ~2 false positive
+
+
+plot(Rs, FDRs, xlab="Number of Rejections", type="l", ylab="FDR", col=4, lwd=3)
+```
+
+
